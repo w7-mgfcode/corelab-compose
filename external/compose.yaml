@@ -1,0 +1,48 @@
+# corelab — ext-01: the "outside world" in the lab. NOT part of the solution.
+#   - Mailpit: plays the external, authenticated SMTP relay (587, mandatory STARTTLS, SMTP AUTH)
+#   - Checkmk Community (formerly Raw): the central, independent monitoring
+# Deliberately simple and not hardened; see external/README.en.md.
+# Start: docker compose --env-file ext.env up -d   (ext.env: VM_ADDR=<app-01 address>)
+name: corelab-ext
+
+services:
+  mailpit:
+    image: axllent/mailpit:v1.33.1@sha256:aef2aacc11f075ec0fb6874275ee4a421e688e11a96ebb296134d1735c7761ce
+    restart: unless-stopped
+    ports:
+      - "587:1025"
+      - "8025:8025"
+    environment:
+      MP_SMTP_AUTH_FILE: /data/smtp.htpasswd
+      MP_UI_AUTH_FILE: /data/ui.htpasswd
+      MP_SMTP_TLS_CERT: /tls/relay.crt
+      MP_SMTP_TLS_KEY: /tls/relay.key
+      MP_SMTP_REQUIRE_STARTTLS: "true"
+      MP_DATABASE: /data/mailpit.db
+      MP_MAX_MESSAGES: "5000"
+    volumes:
+      - ./tls:/tls:ro
+      - ./data:/data
+
+  checkmk:
+    image: checkmk/check-mk-community:2.5.0p20@sha256:4677d9f8b11598252bf15cea61769e3dc20402908071e79448d3537acd8112f7
+    restart: unless-stopped
+    ports:
+      - "8080:5000"
+      - "8000:8000"
+    # CMK_PASSWORD=… (the cmkadmin password); untracked file
+    env_file:
+      - path: ./checkmk.env
+        required: true
+    environment:
+      TZ: Europe/Budapest
+    volumes:
+      - monitoring:/omd/sites
+    tmpfs:
+      - /opt/omd/sites/cmk/tmp:uid=1000,gid=1000
+    extra_hosts:
+      - "app.corelab.test:${VM_ADDR:?VM_ADDR missing}"
+      - "logs.corelab.test:${VM_ADDR:?VM_ADDR missing}"
+
+volumes:
+  monitoring: {}
