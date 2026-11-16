@@ -1,0 +1,29 @@
+# Rendered and lab-specific files: never committed
+build/
+lab.env
+*.ign
+.env
+
+# Secrets, keys, certificates (the relay certificate and the Caddy root are lab artefacts)
+secrets/
+*.pem
+*.key
+*.crt
+*.htpasswd
+
+# ext-01 runtime files
+checkmk.env
+ext.env
+data/
+tls/
+
+# Backups
+backups/
+
+# Local agent/session artefacts: never tracked
+.claude/
+.agents/
+HANDOFF.md
+.handoffs/
+CLAUDE.md
+AGENTS.md
