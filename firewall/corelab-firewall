@@ -1,0 +1,127 @@
+#!/bin/sh
+# corelab-firewall — loader for the corelab host firewall (POSIX sh, runs on Fedora CoreOS).
+# Installed at: /usr/local/sbin/corelab-firewall
+#
+#   corelab-firewall host               load INPUT (IPv4) and INPUT (IPv6)
+#   corelab-firewall docker             load DOCKER-USER (after Docker has started)
+#   corelab-firewall status             current rules and counters
+#   corelab-firewall render host|host6|docker   filled-in rule file to stdout (for tests)
+#
+# Input: /etc/corelab/firewall.env (override: CORELAB_FW_ENV) and the
+# /etc/corelab/firewall/*.rules templates (override: CORELAB_FW_DIR).
+# `iptables-restore --test` runs before every load; only then is the chain flushed.
+set -eu
+
+ENV_FILE=${CORELAB_FW_ENV:-/etc/corelab/firewall.env}
+RULES_DIR=${CORELAB_FW_DIR:-/etc/corelab/firewall}
+KEYS="VM_ADDR EXT_IF ADMIN_SRC CLIENT_NET CHECKMK_SRC"
+
+die() {
+	echo "corelab-firewall: $*" >&2
+	exit 1
+}
+
+load_env() {
+	[ -r "$ENV_FILE" ] || die "env file not readable: $ENV_FILE"
+	# Not sourced: only the known keys are read, literally.
+	while IFS='=' read -r key val || [ -n "$key" ]; do
+		case $key in
+		VM_ADDR | EXT_IF | ADMIN_SRC | CLIENT_NET | CHECKMK_SRC) eval "$key=\$val" ;;
+		esac
+	done <"$ENV_FILE"
+	missing=""
+	for key in $KEYS; do
+		eval "val=\${$key:-}"
+		if [ -z "$val" ]; then
+			missing="$missing $key"
+			continue
+		fi
+		# Only address, network and interface-name characters: this keeps the sed substitution safe.
+		case $val in
+		*[!0-9A-Za-z./:_-]*) die "invalid character in the value of $key" ;;
+		esac
+	done
+	[ -z "$missing" ] || die "missing variable(s):$missing"
+}
+
+render() {
+	case $1 in
+	host) file=host.rules ;;
+	host6) file=host6.rules ;;
+	docker) file=docker-user.rules ;;
+	*) die "unknown rule set: $1 (host|host6|docker)" ;;
+	esac
+	[ -r "$RULES_DIR/$file" ] || die "missing rule file: $RULES_DIR/$file"
+	out=$(sed \
+		-e "s|@VM_ADDR@|$VM_ADDR|g" \
+		-e "s|@EXT_IF@|$EXT_IF|g" \
+		-e "s|@ADMIN_SRC@|$ADMIN_SRC|g" \
+		-e "s|@CLIENT_NET@|$CLIENT_NET|g" \
+		-e "s|@CHECKMK_SRC@|$CHECKMK_SRC|g" \
+		"$RULES_DIR/$file")
+	if printf '%s\n' "$out" | grep -v '^#' | grep -q '@[A-Z_]*@'; then
+		die "unfilled placeholder left: $file"
+	fi
+	printf '%s\n' "$out"
+}
+
+apply_host() {
+	v4=$(render host)
+	v6=$(render host6)
+	printf '%s\n' "$v4" | iptables-restore -w --noflush --test || die "the INPUT (IPv4) rules cannot be loaded"
+	printf '%s\n' "$v6" | ip6tables-restore -w --noflush --test || die "the INPUT (IPv6) rules cannot be loaded"
+	iptables -w -F INPUT
+	printf '%s\n' "$v4" | iptables-restore -w --noflush
+	ip6tables -w -F INPUT
+	printf '%s\n' "$v6" | ip6tables-restore -w --noflush
+	echo "corelab-firewall: INPUT (IPv4, IPv6) loaded"
+}
+
+apply_docker() {
+	rules=$(render docker)
+	i=0
+	until iptables -w -n -L DOCKER-USER >/dev/null 2>&1; do
+		i=$((i + 1))
+		[ "$i" -le 30 ] || die "the DOCKER-USER chain still does not exist after 30 s (Docker firewall backend?)"
+		sleep 1
+	done
+	iptables -w -S FORWARD | grep -q -- '-j DOCKER-USER' ||
+		die "no DOCKER-USER jump in the FORWARD chain"
+	printf '%s\n' "$rules" | iptables-restore -w --noflush --test || die "the DOCKER-USER rules cannot be loaded"
+	iptables -w -F DOCKER-USER
+	printf '%s\n' "$rules" | iptables-restore -w --noflush
+	echo "corelab-firewall: DOCKER-USER loaded"
+}
+
+status() {
+	echo "## iptables INPUT"
+	iptables -w -S INPUT
+	echo "## ip6tables INPUT"
+	ip6tables -w -S INPUT
+	echo "## iptables DOCKER-USER"
+	iptables -w -S DOCKER-USER
+	iptables -w -L DOCKER-USER -v -n
+}
+
+cmd=${1:-}
+case $cmd in
+render)
+	load_env
+	render "${2:-}"
+	;;
+host)
+	load_env
+	apply_host
+	;;
+docker)
+	load_env
+	apply_docker
+	;;
+status)
+	status
+	;;
+*)
+	echo "usage: corelab-firewall host|docker|status|render host|host6|docker" >&2
+	exit 2
+	;;
+esac

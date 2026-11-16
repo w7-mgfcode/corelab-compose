@@ -1,0 +1,12 @@
+# corelab — Checkmk agent (legacy shell script) with socket activation on port 6556.
+# The port is open only from CHECKMK_SRC (firewall/host.rules).
+[Unit]
+Description=Checkmk agent socket (corelab)
+
+[Socket]
+ListenStream=6556
+Accept=yes
+MaxConnections=4
+
+[Install]
+WantedBy=sockets.target

@@ -1,0 +1,13 @@
+# corelab — DOCKER-USER: who may reach the published container ports from outside.
+# Placeholders: @EXT_IF@ @CLIENT_NET@ @CHECKMK_SRC@ @VM_ADDR@
+# After DNAT the destination is already the container address, so we match the
+# ORIGINAL destination (--ctorigdst / --ctorigdstport). Every rule is limited to the
+# external interface, so container egress (Postfix -> relay) never hits the DROP.
+# corelab-firewall first flushes the chain (iptables -F DOCKER-USER), and only then loads it.
+*filter
+-A DOCKER-USER -i @EXT_IF@ -m conntrack --ctstate RELATED,ESTABLISHED -j RETURN
+-A DOCKER-USER -i @EXT_IF@ -p tcp -s @CLIENT_NET@ -m conntrack --ctstate NEW --ctorigdst @VM_ADDR@ --ctorigdstport 443 -j RETURN
+-A DOCKER-USER -i @EXT_IF@ -p tcp -s @CHECKMK_SRC@ -m conntrack --ctstate NEW --ctorigdst @VM_ADDR@ --ctorigdstport 443 -j RETURN
+-A DOCKER-USER -i @EXT_IF@ -m limit --limit 5/min -j LOG --log-prefix "corelab-dock-drop: "
+-A DOCKER-USER -i @EXT_IF@ -j DROP
+COMMIT

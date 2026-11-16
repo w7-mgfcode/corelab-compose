@@ -1,0 +1,15 @@
+# corelab — host firewall (INPUT and ip6tables INPUT), before the network and Docker.
+[Unit]
+Description=corelab: host firewall (INPUT, IPv4 and IPv6)
+DefaultDependencies=no
+Wants=network-pre.target
+Before=network-pre.target docker.service
+After=local-fs.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/corelab-firewall host
+
+[Install]
+WantedBy=multi-user.target

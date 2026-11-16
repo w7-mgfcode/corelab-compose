@@ -1,0 +1,21 @@
+# corelab — swap the built-in Moby for Docker CE, once, on the first boot.
+# Based on the upstream FCOS "Installing Docker CE" unit; Ignition ships the
+# repo file (/etc/yum.repos.d/docker-ce.repo), so there is no curl.
+# The stamp is written BEFORE the reboot, so the other units gate on
+# `rpm -q docker-ce`, not on the stamp.
+[Unit]
+Description=corelab: swap Moby for Docker CE (once, on first boot)
+Wants=network-online.target
+After=network-online.target
+Before=zincati.service
+ConditionPathExists=!/var/lib/%N.stamp
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/rpm-ostree override remove moby-engine containerd runc docker-cli --install docker-ce --install docker-compose-plugin
+ExecStart=/usr/bin/touch /var/lib/%N.stamp
+ExecStart=/usr/bin/systemctl --no-block reboot
+
+[Install]
+WantedBy=multi-user.target

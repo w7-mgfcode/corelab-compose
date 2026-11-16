@@ -1,0 +1,16 @@
+# corelab — DOCKER-USER rules after every Docker start.
+# PartOf=docker.service: `systemctl restart docker` restarts this unit too,
+# so the rules are always restored before the containers.
+[Unit]
+Description=corelab: DOCKER-USER firewall rules
+Requires=docker.service
+After=docker.service
+PartOf=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/corelab-firewall docker
+
+[Install]
+WantedBy=multi-user.target

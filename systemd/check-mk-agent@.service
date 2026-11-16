@@ -1,0 +1,11 @@
+# corelab — one Checkmk agent run per connection.
+# The owner installs the agent script (check_mk_agent.linux) from the Checkmk
+# server, because its version must match the server's.
+[Unit]
+Description=Checkmk agent (corelab)
+ConditionPathExists=/usr/local/bin/check_mk_agent
+
+[Service]
+ExecStart=-/usr/local/bin/check_mk_agent
+StandardInput=socket
+User=root

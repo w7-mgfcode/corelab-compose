@@ -1,0 +1,24 @@
+#!/bin/sh
+# corelab — Checkmk local check: state of the Compose services.
+# Installed at: /usr/local/lib/check_mk_agent/local/corelab_compose (0755)
+# Line format: <state> "<service name>" <metric|-> <details>
+# `docker compose config --services` lists only the services of active profiles
+# by default, so wpcli (profile `tools`) is left out.
+cd /var/lib/corelab/stack 2>/dev/null || {
+	echo '2 "corelab stack" - stack directory missing'
+	exit 0
+}
+
+services=$(docker compose config --services 2>/dev/null) || {
+	echo '2 "corelab stack" - docker compose config failed'
+	exit 0
+}
+
+for svc in $services; do
+	state=$(docker compose ps --all --format '{{.State}}' "$svc" 2>/dev/null | head -n 1)
+	if [ "$state" = "running" ]; then
+		echo "0 \"corelab $svc\" - $svc is running"
+	else
+		echo "2 \"corelab $svc\" - $svc is ${state:-absent}"
+	fi
+done

@@ -1,0 +1,22 @@
+# corelab — start the Compose stack, only after the firewall.
+# The containers run with restart: "no", so only this unit starts them.
+# `docker compose down` keeps the named volumes (never -v).
+[Unit]
+Description=corelab Compose stack
+Requires=docker.service corelab-firewall-docker.service
+After=docker.service corelab-firewall-docker.service network-online.target
+Wants=network-online.target
+PartOf=docker.service
+ConditionPathExists=/var/lib/corelab/secrets/.ready
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/var/lib/corelab/stack
+ExecStartPre=/usr/bin/rpm -q docker-ce
+ExecStart=/usr/bin/docker compose up -d --build --remove-orphans
+ExecStop=/usr/bin/docker compose down
+TimeoutStartSec=900
+
+[Install]
+WantedBy=multi-user.target

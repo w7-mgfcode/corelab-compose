@@ -1,0 +1,16 @@
+# corelab — host INPUT rules (iptables-restore format, loaded with --noflush).
+# Placeholders: @ADMIN_SRC@ @CHECKMK_SRC@ — corelab-firewall fills them in from /etc/corelab/firewall.env.
+# The FORWARD chain and the nat table belong to Docker; they are not declared here.
+*filter
+:INPUT DROP [0:0]
+-A INPUT -i lo -j ACCEPT
+-A INPUT -m conntrack --ctstate RELATED,ESTABLISHED -j ACCEPT
+-A INPUT -m conntrack --ctstate INVALID -j DROP
+-A INPUT -p tcp -s @ADMIN_SRC@ --dport 22 -m conntrack --ctstate NEW -j ACCEPT
+-A INPUT -p tcp -s @CHECKMK_SRC@ --dport 6556 -m conntrack --ctstate NEW -j ACCEPT
+-A INPUT -p icmp --icmp-type echo-request -s @ADMIN_SRC@ -j ACCEPT
+-A INPUT -p icmp --icmp-type echo-request -s @CHECKMK_SRC@ -j ACCEPT
+# DHCP replies (lease renewal)
+-A INPUT -p udp --sport 67 --dport 68 -j ACCEPT
+-A INPUT -m limit --limit 5/min -j LOG --log-prefix "corelab-in-drop: "
+COMMIT

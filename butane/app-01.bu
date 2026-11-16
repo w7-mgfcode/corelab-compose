@@ -1,0 +1,126 @@
+# corelab — app-01 (Fedora CoreOS) Butane config.
+# Rendering: scripts/render-ignition.sh (it builds the build/ files from lab.env).
+# Every local: path is relative to --files-dir (the repo root).
+# No secret ever goes here; secrets arrive over SSH after the first boot (scripts/push-secrets.sh).
+variant: fcos
+version: 1.7.0
+
+passwd:
+  users:
+    - name: core
+      ssh_authorized_keys_local:
+        - build/admin.pub
+
+storage:
+  directories:
+    - path: /var/lib/corelab
+      mode: 0755
+    - path: /var/lib/corelab/stack
+      mode: 0755
+    - path: /var/lib/corelab/secrets
+      mode: 0700
+    - path: /etc/corelab
+      mode: 0755
+    - path: /etc/corelab/firewall
+      mode: 0755
+    - path: /usr/local/lib/check_mk_agent
+      mode: 0755
+    - path: /usr/local/lib/check_mk_agent/local
+      mode: 0755
+
+  files:
+    - path: /etc/hostname
+      mode: 0644
+      contents:
+        inline: app-01
+
+    # Docker CE repo: shipped, not downloaded at runtime
+    - path: /etc/yum.repos.d/docker-ce.repo
+      mode: 0644
+      contents:
+        local: butane/docker-ce.repo
+
+    # Updates: Zincati reboots only on Sunday between 03:00 and 04:00 (UTC)
+    - path: /etc/zincati/config.d/55-updates-strategy.toml
+      mode: 0644
+      contents:
+        inline: |
+          [updates]
+          strategy = "periodic"
+          [[updates.periodic.window]]
+          days = [ "Sun" ]
+          start_time = "03:00"
+          length_minutes = 60
+
+    - path: /etc/systemd/journald.conf.d/50-corelab.conf
+      mode: 0644
+      contents:
+        inline: |
+          [Journal]
+          SystemMaxUse=500M
+
+    # Firewall: lab values (rendered from lab.env), rule templates, loader
+    - path: /etc/corelab/firewall.env
+      mode: 0600
+      contents:
+        local: build/firewall.env
+    - path: /etc/corelab/firewall/host.rules
+      mode: 0644
+      contents:
+        local: firewall/host.rules
+    - path: /etc/corelab/firewall/host6.rules
+      mode: 0644
+      contents:
+        local: firewall/host6.rules
+    - path: /etc/corelab/firewall/docker-user.rules
+      mode: 0644
+      contents:
+        local: firewall/docker-user.rules
+    - path: /usr/local/sbin/corelab-firewall
+      mode: 0755
+      contents:
+        local: firewall/corelab-firewall
+
+    # Checkmk local check (the owner installs the agent script, see docs/hu/install.md)
+    - path: /usr/local/lib/check_mk_agent/local/corelab_compose
+      mode: 0755
+      contents:
+        local: monitoring/local/corelab_compose
+
+    # Compose stack files
+    - path: /var/lib/corelab/stack/compose.yaml
+      mode: 0644
+      contents:
+        local: compose.yaml
+    - path: /var/lib/corelab/stack/Caddyfile
+      mode: 0644
+      contents:
+        local: Caddyfile
+    - path: /var/lib/corelab/stack/.env
+      mode: 0644
+      contents:
+        local: build/stack.env
+
+  trees:
+    - local: config
+      path: /var/lib/corelab/stack/config
+
+systemd:
+  units:
+    - name: corelab-docker-ce.service
+      enabled: true
+      contents_local: systemd/corelab-docker-ce.service
+    - name: corelab-firewall-host.service
+      enabled: true
+      contents_local: systemd/corelab-firewall-host.service
+    - name: corelab-firewall-docker.service
+      enabled: true
+      contents_local: systemd/corelab-firewall-docker.service
+    - name: corelab-stack.service
+      enabled: true
+      contents_local: systemd/corelab-stack.service
+    - name: check-mk-agent.socket
+      enabled: true
+      contents_local: systemd/check-mk-agent.socket
+    - name: check-mk-agent@.service
+      contents_local: systemd/check-mk-agent@.service
