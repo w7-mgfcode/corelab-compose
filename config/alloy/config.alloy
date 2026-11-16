@@ -1,0 +1,35 @@
+// corelab — Alloy: ships the Caddy and Postfix log files to Loki.
+// The files arrive on shared, read-only volumes (caddy_logs, postfix_logs).
+// Only low-cardinality labels (service, host); the queue ID and request details stay in the line.
+
+local.file_match "caddy" {
+  path_targets = [{
+    "__path__" = "/logs/caddy/access.log",
+    "service"  = "caddy",
+    "host"     = "app-01",
+  }]
+}
+
+local.file_match "postfix" {
+  path_targets = [{
+    "__path__" = "/logs/postfix/mail.log",
+    "service"  = "postfix",
+    "host"     = "app-01",
+  }]
+}
+
+loki.source.file "caddy" {
+  targets    = local.file_match.caddy.targets
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.source.file "postfix" {
+  targets    = local.file_match.postfix.targets
+  forward_to = [loki.write.local.receiver]
+}
+
+loki.write "local" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}

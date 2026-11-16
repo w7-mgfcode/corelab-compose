@@ -1,0 +1,44 @@
+# corelab — Postfix: accepts mail only from WordPress (and the wpcli tool),
+# and hands all of it to the external, authenticated relay (587, mandatory STARTTLS,
+# with certificate verification). No local delivery.
+# Note: keep comments on their own lines; a trailing # would become part of the value.
+
+compatibility_level = 3.6
+myhostname = mail.corelab.test
+myorigin = $myhostname
+inet_interfaces = all
+inet_protocols = ipv4
+
+# Not the final destination for any domain
+mydestination =
+local_recipient_maps =
+local_transport = error:local delivery disabled
+alias_maps =
+alias_database =
+
+# Trusted clients: loopback, and the fixed addresses of WordPress (172.30.10.10) and wpcli
+# (172.30.10.11) on the "mail" network (172.30.10.0/24, compose.yaml). Everyone else gets 5.7.1.
+mynetworks = 127.0.0.0/8 172.30.10.10/32 172.30.10.11/32
+smtpd_relay_restrictions = permit_mynetworks, reject_unauth_destination
+smtpd_recipient_restrictions = permit_mynetworks, reject_unauth_destination
+
+# Outbound path: the relay name comes from the Compose extra_hosts entry (/etc/hosts),
+# so "native" lookup is needed (the default "dns" would ignore it).
+relayhost = [relay.corelab.test]:587
+smtp_host_lookup = native
+
+# SMTP AUTH towards the relay; the password comes from the Compose secret, without postmap (texthash)
+smtp_sasl_auth_enable = yes
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous
+smtp_sasl_password_maps = texthash:/run/secrets/relay_credentials
+
+# "secure": mandatory TLS and certificate verification against the next-hop name
+# (relay.corelab.test); "encrypt" would not verify. The trust anchor is the relay's
+# self-signed certificate.
+smtp_tls_security_level = secure
+smtp_tls_CAfile = /run/secrets/relay_ca_cert
+smtp_tls_loglevel = 1
+
+# Log to a file (postfix_logs volume), through the postlog service
+maillog_file = /var/log/postfix/mail.log

@@ -1,0 +1,176 @@
+# corelab — the whole stack in a single Compose project (app-01).
+# Started only by corelab-stack.service (after the firewall), so every
+# service has restart: "no". Only Caddy publishes a port (TCP 443).
+# RELAY_ADDR comes from /var/lib/corelab/stack/.env (rendered from lab.env).
+name: corelab
+
+services:
+  caddy:
+    image: caddy:2.11.9@sha256:4e2425f6009577e7c651010f16679c28f7d12df3e7b1914f941a7a3370746b3c
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    ports:
+      - "443:443"
+    networks: [edge, web, grafana-proxy]
+    volumes:
+      - caddy_data:/data
+      - caddy_config:/config
+      - caddy_logs:/var/log/caddy
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro,z
+    depends_on:
+      wordpress: { condition: service_started }
+      grafana: { condition: service_started }
+
+  wordpress:
+    image: wordpress:7.1.4-php8.4-apache@sha256:4bf2c44f19a5eba28de4e5cbe50e1c5dc55ae3f8b894f681f4d7676a7e2512e5
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_wordpress_password
+    secrets: [db_wordpress_password]
+    volumes:
+      - wp_html:/var/www/html
+      - ./config/wordpress/mu-plugins/corelab-smtp.php:/var/www/html/wp-content/mu-plugins/corelab-smtp.php:ro,z
+    networks:
+      web: {}
+      database: {}
+      mail: { ipv4_address: 172.30.10.10 }
+    depends_on:
+      mariadb: { condition: service_healthy }
+
+  mariadb:
+    image: mariadb:11.8.9@sha256:d36f18d65a0459510b8b0f643b226a6d299e3206486e2b64ff20754a6d291707
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      MARIADB_ROOT_PASSWORD_FILE: /run/secrets/db_root_password
+      MARIADB_DATABASE: wordpress
+      MARIADB_USER: wordpress
+      MARIADB_PASSWORD_FILE: /run/secrets/db_wordpress_password
+    secrets: [db_root_password, db_wordpress_password]
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    networks: [database]
+    healthcheck:
+      test: ["CMD", "healthcheck.sh", "--connect", "--innodb_initialized"]
+      interval: 10s
+      retries: 10
+      start_period: 30s
+
+  # A tool, not a long-running service: docker compose run --rm wpcli wp …
+  wpcli:
+    image: wordpress:cli-2.12.0-php8.4@sha256:858dc76209146b8b5544fbdfde6fbb364fd7545c0114aebbccb52144adb50b5c
+    profiles: ["tools"]
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    user: "33:33"
+    environment:
+      WORDPRESS_DB_HOST: mariadb
+      WORDPRESS_DB_NAME: wordpress
+      WORDPRESS_DB_USER: wordpress
+      WORDPRESS_DB_PASSWORD_FILE: /run/secrets/db_wordpress_password
+    secrets: [db_wordpress_password, wordpress_admin_password]
+    volumes:
+      - wp_html:/var/www/html
+      - ./config/wordpress/mu-plugins/corelab-smtp.php:/var/www/html/wp-content/mu-plugins/corelab-smtp.php:ro,z
+    networks:
+      database: {}
+      mail: { ipv4_address: 172.30.10.11 }
+
+  postfix:
+    build: ./config/postfix
+    image: corelab-postfix:local
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    secrets: [relay_credentials, relay_ca_cert]
+    volumes:
+      - postfix_queue:/var/spool/postfix
+      - postfix_logs:/var/log/postfix
+    networks: [mail, relay-out]
+    extra_hosts:
+      - "relay.corelab.test:${RELAY_ADDR:?RELAY_ADDR missing}"
+
+  loki:
+    image: grafana/loki:3.7.10@sha256:b43c257ccfc925d4a50b8717cac61a3b51df8c48d01847936057e5c4075a24a7
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    command: ["-config.file=/etc/loki/loki.yaml"]
+    volumes:
+      - ./config/loki/loki.yaml:/etc/loki/loki.yaml:ro,z
+      - loki_data:/loki
+    networks: [logs]
+
+  alloy:
+    image: grafana/alloy:v1.22.0@sha256:9acc2529bc1edb7f5b2bd801dd8334ebc80c158e3a9e5526ecd7c9a273d43189
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    # root is needed to read the root-owned log files; every capability is dropped.
+    # Positions go to a new mount point (/alloy-data, owned by root): the image's
+    # /var/lib/alloy/data is 473:473 0770, which even root cannot write without DAC_OVERRIDE.
+    user: "0:0"
+    cap_drop: [ALL]
+    command: ["run", "--storage.path=/alloy-data", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./config/alloy/config.alloy:/etc/alloy/config.alloy:ro,z
+      - caddy_logs:/logs/caddy:ro
+      - postfix_logs:/logs/postfix:ro
+      - alloy_data:/alloy-data
+    networks: [logs]
+    depends_on:
+      loki: { condition: service_started }
+
+  grafana:
+    image: grafana/grafana:13.3.1@sha256:0615ec4fbd4072004b7d86b46ded63013a74b7d6eb1119273dd89e8fa25c13cf
+    restart: "no"
+    security_opt: ["no-new-privileges:true"]
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      GF_SERVER_ROOT_URL: https://logs.corelab.test/
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+    secrets: [grafana_admin_password]
+    volumes:
+      - grafana_data:/var/lib/grafana
+      - ./config/grafana/provisioning:/etc/grafana/provisioning:ro,z
+    networks: [logs, grafana-proxy]
+    depends_on:
+      loki: { condition: service_started }
+
+networks:
+  # The only non-internal network towards Caddy: Docker does not publish ports on an internal network
+  edge: {}
+  web: { internal: true }
+  database: { internal: true }
+  logs: { internal: true }
+  grafana-proxy: { internal: true }
+  mail:
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.30.10.0/24
+  # Postfix's outbound path to the relay
+  relay-out: {}
+
+volumes:
+  caddy_data: {}
+  caddy_config: {}
+  caddy_logs: {}
+  wp_html: {}
+  mariadb_data: {}
+  postfix_queue: {}
+  postfix_logs: {}
+  loki_data: {}
+  alloy_data: {}
+  grafana_data: {}
+
+secrets:
+  db_root_password: { file: /var/lib/corelab/secrets/db_root_password }
+  db_wordpress_password: { file: /var/lib/corelab/secrets/db_wordpress_password }
+  wordpress_admin_password: { file: /var/lib/corelab/secrets/wordpress_admin_password }
+  grafana_admin_password: { file: /var/lib/corelab/secrets/grafana_admin_password }
+  relay_credentials: { file: /var/lib/corelab/secrets/relay_credentials }
+  relay_ca_cert: { file: /var/lib/corelab/secrets/relay_ca_cert }
